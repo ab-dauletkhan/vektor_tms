@@ -1,0 +1,116 @@
+version: "3"
+
+vars:
+  BIN_DIR: "{{.ROOT_DIR}}/bin"
+
+  GOLANGCI_LINT_VERSION: "v2.8.0"
+  GOFUMPT_VERSION: "v0.9.2"
+  GCI_VERSION: "v0.13.7"
+
+  GOLANGCI_LINT: "{{.BIN_DIR}}/golangci-lint"
+  GOFUMPT: "{{.BIN_DIR}}/gofumpt"
+  GCI: "{{.BIN_DIR}}/gci"
+
+tasks:
+  install:gofumpt:
+    desc: Install gofumpt into ./bin
+    cmds:
+      - mkdir -p {{.BIN_DIR}}
+      - |
+        [ -x {{.GOFUMPT}} ] || {
+          echo "Installing gofumpt {{.GOFUMPT_VERSION}}..."
+          GOBIN={{.BIN_DIR}} go install mvdan.cc/gofumpt@{{.GOFUMPT_VERSION}}
+        }
+    status:
+      - test -x {{.GOFUMPT}}
+
+  install:gci:
+    desc: Install gci into ./bin
+    cmds:
+      - mkdir -p {{.BIN_DIR}}
+      - |
+        [ -x {{.GCI}} ] || {
+          echo "Installing gci {{.GCI_VERSION}}..."
+          GOBIN={{.BIN_DIR}} go install github.com/daixiang0/gci@{{.GCI_VERSION}}
+        }
+    status:
+      - test -x {{.GCI}}
+
+  install:golangci-lint:
+    desc: Install golangci-lint into ./bin
+    cmds:
+      - mkdir -p {{.BIN_DIR}}
+      - |
+        [ -x {{.GOLANGCI_LINT}} ] || {
+          echo "Installing golangci-lint {{.GOLANGCI_LINT_VERSION}}..."
+          GOBIN={{.BIN_DIR}} go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@{{.GOLANGCI_LINT_VERSION}}
+        }
+    status:
+      - test -x {{.GOLANGCI_LINT}}
+
+  install:tools:
+    desc: Install all local development tools
+    deps:
+      - install:gofumpt
+      - install:gci
+      - install:golangci-lint
+
+  fmt:
+    desc: Format Go files with gofumpt and gci
+    deps:
+      - install:gofumpt
+      - install:gci
+    cmds:
+      - |
+        echo "Running gofumpt..."
+        find . -type f -name '*.go' \
+          ! -path './bin/*' \
+          ! -path './gen/*' \
+          -exec {{.GOFUMPT}} -extra -w {} +
+      - |
+        echo "Running gci..."
+        find . -type f -name '*.go' \
+          ! -path './bin/*' \
+          ! -path './gen/*' \
+          -exec {{.GCI}} write \
+            -s standard \
+            -s default \
+            -s "prefix(github.com/ab-dauletkhan/vektor_tms)" {} +
+
+  lint:
+    desc: Run golangci-lint
+    deps:
+      - install:golangci-lint
+    cmds:
+      - "{{.GOLANGCI_LINT}} run ./... --config=.golangci.yml"
+
+  test:
+    desc: Run all tests
+    cmds:
+      - go test ./... -v
+
+  check:
+    desc: Run formatting, linting, and tests
+    cmds:
+      - task: fmt
+      - task: lint
+      - task: test
+
+  tidy:
+    desc: Tidy Go modules
+    cmds:
+      - go mod tidy
+
+  proto:
+    desc: Generate protobuf code
+    cmds:
+      - |
+        protoc -I ./api/proto \
+          --go_out=. --go_opt=paths=source_relative \
+          --go-grpc_out=. --go-grpc_opt=paths=source_relative \
+          ./api/proto/shipment/v1/shipment.proto
+
+  run:
+    desc: Run the service
+    cmds:
+      - go run ./cmd/shipmentd

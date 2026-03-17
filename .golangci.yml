@@ -1,0 +1,72 @@
+version: "2"
+
+run:
+  timeout: 5m
+  relative-path-mode: gomod
+  issues-exit-code: 1
+  tests: true
+  modules-download-mode: readonly
+
+output:
+  formats:
+    text:
+      print-linter-name: true
+      print-issued-lines: true
+      colors: true
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  uniq-by-line: true
+
+linters:
+  default: standard
+  enable:
+    - errcheck
+    - staticcheck
+    - govet
+    - revive
+    - unused
+    - ineffassign
+    - errorlint
+    - errname
+    - gosec
+    - bodyclose
+    - depguard
+    - contextcheck
+    - containedctx
+  disable:
+    - lll
+    - gocyclo
+
+  exclusions:
+    generated: strict
+    rules:
+      - path: _test\.go
+        linters:
+          - gosec
+
+  settings:
+    depguard:
+      rules:
+        main:
+          deny:
+            - pkg: io/ioutil
+              desc: "io/ioutil is deprecated; use os or io instead"
+
+    revive:
+      severity: warning
+
+formatters:
+  enable:
+    - gofumpt
+    - gci
+  settings:
+    gofumpt:
+      extra-rules: true
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(github.com/ab-dauletkhan/vektor_tms)
+      no-inline-comments: false
