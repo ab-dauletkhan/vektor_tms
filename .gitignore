@@ -19,6 +19,12 @@
 
 !Taskfile.yml
 !.golangci.yml
+!buf.yaml
+!buf.gen.yaml
+
+!task_brief.md
+!task.md
+!*.proto
 
 # ...even if they are in subdirectories
 !*/

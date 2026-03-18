@@ -2,14 +2,32 @@ version: "3"
 
 vars:
   BIN_DIR: "{{.ROOT_DIR}}/bin"
+  CACHE_DIR: "{{.ROOT_DIR}}/.cache"
+  GO_BUILD_CACHE_DIR: "{{.CACHE_DIR}}/go-build"
+  GO_MOD_CACHE_DIR: "{{.CACHE_DIR}}/gomod"
+  GOLANGCI_LINT_CACHE_DIR: "{{.CACHE_DIR}}/golangci-lint"
 
   GOLANGCI_LINT_VERSION: "v2.8.0"
   GOFUMPT_VERSION: "v0.9.2"
   GCI_VERSION: "v0.13.7"
+  BUF_VERSION: "v1.39.0"
+  PROTOC_GEN_GO_VERSION: "v1.36.10"
+  PROTOC_GEN_GO_GRPC_VERSION: "v1.5.1"
 
-  GOLANGCI_LINT: "{{.BIN_DIR}}/golangci-lint"
+  GOLANGCI_LINT:
+    sh: |
+      if [ -x "{{.BIN_DIR}}/golangci-lint" ]; then
+        echo "{{.BIN_DIR}}/golangci-lint"
+      elif command -v golangci-lint >/dev/null 2>&1; then
+        command -v golangci-lint
+      else
+        echo "{{.BIN_DIR}}/golangci-lint"
+      fi
   GOFUMPT: "{{.BIN_DIR}}/gofumpt"
   GCI: "{{.BIN_DIR}}/gci"
+  BUF: "{{.BIN_DIR}}/buf"
+  PROTOC_GEN_GO: "{{.BIN_DIR}}/protoc-gen-go"
+  PROTOC_GEN_GO_GRPC: "{{.BIN_DIR}}/protoc-gen-go-grpc"
 
 tasks:
   install:gofumpt:
@@ -41,12 +59,55 @@ tasks:
     cmds:
       - mkdir -p {{.BIN_DIR}}
       - |
-        [ -x {{.GOLANGCI_LINT}} ] || {
+        if [ -x "{{.BIN_DIR}}/golangci-lint" ]; then
+          exit 0
+        fi
+        if command -v golangci-lint >/dev/null 2>&1; then
+          echo "Using system golangci-lint: $(command -v golangci-lint)"
+          exit 0
+        fi
+        {
           echo "Installing golangci-lint {{.GOLANGCI_LINT_VERSION}}..."
           GOBIN={{.BIN_DIR}} go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@{{.GOLANGCI_LINT_VERSION}}
         }
     status:
-      - test -x {{.GOLANGCI_LINT}}
+      - test -x {{.BIN_DIR}}/golangci-lint || command -v golangci-lint >/dev/null 2>&1
+
+  install:buf:
+    desc: Install buf into ./bin
+    cmds:
+      - mkdir -p {{.BIN_DIR}}
+      - |
+        [ -x {{.BUF}} ] || {
+          echo "Installing buf {{.BUF_VERSION}}..."
+          GOBIN={{.BIN_DIR}} go install github.com/bufbuild/buf/cmd/buf@{{.BUF_VERSION}}
+        }
+    status:
+      - test -x {{.BUF}}
+
+  install:protoc-gen-go:
+    desc: Install protoc-gen-go into ./bin
+    cmds:
+      - mkdir -p {{.BIN_DIR}}
+      - |
+        [ -x {{.PROTOC_GEN_GO}} ] || {
+          echo "Installing protoc-gen-go {{.PROTOC_GEN_GO_VERSION}}..."
+          GOBIN={{.BIN_DIR}} go install google.golang.org/protobuf/cmd/protoc-gen-go@{{.PROTOC_GEN_GO_VERSION}}
+        }
+    status:
+      - test -x {{.PROTOC_GEN_GO}}
+
+  install:protoc-gen-go-grpc:
+    desc: Install protoc-gen-go-grpc into ./bin
+    cmds:
+      - mkdir -p {{.BIN_DIR}}
+      - |
+        [ -x {{.PROTOC_GEN_GO_GRPC}} ] || {
+          echo "Installing protoc-gen-go-grpc {{.PROTOC_GEN_GO_GRPC_VERSION}}..."
+          GOBIN={{.BIN_DIR}} go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@{{.PROTOC_GEN_GO_GRPC_VERSION}}
+        }
+    status:
+      - test -x {{.PROTOC_GEN_GO_GRPC}}
 
   install:tools:
     desc: Install all local development tools
@@ -54,40 +115,86 @@ tasks:
       - install:gofumpt
       - install:gci
       - install:golangci-lint
+      - install:buf
+      - install:protoc-gen-go
+      - install:protoc-gen-go-grpc
 
   fmt:
     desc: Format Go files with gofumpt and gci
-    deps:
-      - install:gofumpt
-      - install:gci
     cmds:
       - |
-        echo "Running gofumpt..."
-        find . -type f -name '*.go' \
-          ! -path './bin/*' \
-          ! -path './gen/*' \
-          -exec {{.GOFUMPT}} -extra -w {} +
+        if [ -x "{{.GOFUMPT}}" ]; then
+          echo "Running gofumpt..."
+          find . -type f -name '*.go' \
+            ! -path './bin/*' \
+            ! -path './gen/*' \
+            ! -path './.cache/*' \
+            ! -name '*.pb.go' \
+            -exec {{.GOFUMPT}} -extra -w {} +
+        elif command -v gofumpt >/dev/null 2>&1; then
+          echo "Running system gofumpt..."
+          find . -type f -name '*.go' \
+            ! -path './bin/*' \
+            ! -path './gen/*' \
+            ! -path './.cache/*' \
+            ! -name '*.pb.go' \
+            -exec "$(command -v gofumpt)" -extra -w {} +
+        else
+          echo "gofumpt not available; falling back to gofmt"
+          find . -type f -name '*.go' \
+            ! -path './bin/*' \
+            ! -path './gen/*' \
+            ! -path './.cache/*' \
+            ! -name '*.pb.go' \
+            -exec gofmt -w {} +
+        fi
       - |
-        echo "Running gci..."
-        find . -type f -name '*.go' \
-          ! -path './bin/*' \
-          ! -path './gen/*' \
-          -exec {{.GCI}} write \
-            -s standard \
-            -s default \
-            -s "prefix(github.com/ab-dauletkhan/vektor_tms)" {} +
+        if [ -x "{{.GCI}}" ]; then
+          echo "Running gci..."
+          find . -type f -name '*.go' \
+            ! -path './bin/*' \
+            ! -path './gen/*' \
+            ! -path './.cache/*' \
+            ! -name '*.pb.go' \
+            -exec {{.GCI}} write \
+              -s standard \
+              -s default \
+              -s "prefix(github.com/ab-dauletkhan/vektor_tms)" {} +
+        elif command -v gci >/dev/null 2>&1; then
+          echo "Running system gci..."
+          find . -type f -name '*.go' \
+            ! -path './bin/*' \
+            ! -path './gen/*' \
+            ! -path './.cache/*' \
+            ! -name '*.pb.go' \
+            -exec "$(command -v gci)" write \
+              -s standard \
+              -s default \
+              -s "prefix(github.com/ab-dauletkhan/vektor_tms)" {} +
+        else
+          echo "gci not available; skipping standalone import sorting"
+        fi
 
   lint:
     desc: Run golangci-lint
     deps:
       - install:golangci-lint
     cmds:
-      - "{{.GOLANGCI_LINT}} run ./... --config=.golangci.yml"
+      - mkdir -p {{.GO_BUILD_CACHE_DIR}} {{.GO_MOD_CACHE_DIR}} {{.GOLANGCI_LINT_CACHE_DIR}}
+      - |
+        GOCACHE="{{.GO_BUILD_CACHE_DIR}}" \
+        GOMODCACHE="${GOMODCACHE:-$(go env GOMODCACHE)}" \
+        GOLANGCI_LINT_CACHE="{{.GOLANGCI_LINT_CACHE_DIR}}" \
+        {{.GOLANGCI_LINT}} run ./... --config=.golangci.yml
 
   test:
     desc: Run all tests
     cmds:
-      - go test ./... -v
+      - mkdir -p {{.GO_BUILD_CACHE_DIR}} {{.GO_MOD_CACHE_DIR}}
+      - |
+        GOCACHE="{{.GO_BUILD_CACHE_DIR}}" \
+        GOMODCACHE="${GOMODCACHE:-$(go env GOMODCACHE)}" \
+        go test ./... -v
 
   check:
     desc: Run formatting, linting, and tests
@@ -103,12 +210,13 @@ tasks:
 
   proto:
     desc: Generate protobuf code
+    deps:
+      - install:buf
+      - install:protoc-gen-go
+      - install:protoc-gen-go-grpc
     cmds:
-      - |
-        protoc -I ./api/proto \
-          --go_out=. --go_opt=paths=source_relative \
-          --go-grpc_out=. --go-grpc_opt=paths=source_relative \
-          ./api/proto/shipment/v1/shipment.proto
+      - mkdir -p {{.CACHE_DIR}}/xdg
+      - PATH="{{.BIN_DIR}}:$PATH" XDG_CACHE_HOME="{{.CACHE_DIR}}/xdg" {{.BUF}} generate
 
   run:
     desc: Run the service

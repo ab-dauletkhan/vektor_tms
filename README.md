@@ -1,219 +1,262 @@
-# Shipment Tracking Service
+# Shipment Tracking gRPC Microservice
 
-## Current stage
+## Overview
 
-- Implemented: domain aggregate, lifecycle validation, event history, rehydration, and unit tests
-- Not implemented yet: application layer, repository adapter, protobuf contract, gRPC transport, runnable service binary
+This repository contains a shipment tracking gRPC microservice built for the take-home task.
 
-## Run and test
+The service supports four operations:
+
+- create a shipment
+- retrieve shipment details
+- add a shipment status event
+- retrieve shipment status history
+
+The implementation follows a clean / hexagonal style:
+
+- `internal/domain/shipment` owns business rules and invariant protection
+- `internal/application` orchestrates use cases through ports
+- `internal/adapters/...` provides in-memory persistence, clock/ID adapters, and gRPC transport
+- `cmd/shipmentd` wires the service into a runnable gRPC server
+
+## Run
+
+Generate protobuf stubs:
+
+```bash
+task proto
+```
+
+Start the service:
+
+```bash
+task run
+```
+
+The gRPC server listens on `:8080` by default.
+
+Use a different address if needed:
+
+```bash
+SHIPMENTD_ADDR=:9090 task run
+```
+
+## Test
+
+Run the test suite:
 
 ```bash
 task test
 ```
 
-Optional local quality commands:
+Additional local verification commands:
 
 ```bash
-task fmt
+go vet ./...
 task lint
 task check
 ```
 
-## Architecture direction
+## Architecture
 
-The service is being built in clean/hexagonal style:
-
-- Domain owns shipment business rules and invariant protection
-- Application will orchestrate use cases
-- Adapters will later handle persistence and gRPC
-
-The current domain package depends only on the Go standard library.
-
-## Domain model
-
-### Shipment
+### Domain
 
 `Shipment` is the aggregate root.
 
-It owns:
+The domain layer is isolated from gRPC, protobuf, and persistence concerns. It models:
 
 - shipment identity and business fields
 - shipment lifecycle state
-- append-only event history
-- cross-field invariants such as `driverRevenue <= shipmentAmount`
+- append-only status event history
+- validated value objects for driver, unit, and money
 
-Validation enforced by the aggregate:
+Core invariant protection lives here:
 
-- shipment ID must be non-empty after trimming
-- reference number must be non-empty after trimming
-- origin and destination must be non-empty after trimming
-- origin and destination must differ
-- shipment amount and driver revenue must both be explicitly present
-- driver revenue cannot exceed shipment amount
 - initial status is always `pending`
-- every new status event must be a valid transition
+- current status is always derived from the latest valid event
+- invalid lifecycle transitions are rejected
 - duplicate status transitions are rejected
-- out-of-order event timestamps are rejected
+- out-of-order events are rejected
+- `driverRevenue` cannot exceed `shipmentAmount`
 
-Design decisions:
+### Application
 
-- current status is derived from the last event instead of stored separately
-- created/updated timestamps are derived from event history
-- event history is the source of truth for shipment state
-- `Events()` returns a copy so callers cannot mutate aggregate history from outside
+The application layer exposes transport-agnostic commands, queries, and DTOs for:
 
-### Status
+- `CreateShipment`
+- `GetShipment`
+- `AddStatusEvent`
+- `GetShipmentHistory`
 
-`Status` is a constrained domain type with a small explicit lifecycle:
+It is responsible for:
 
-- `pending -> picked_up -> in_transit -> delivered`
-- `pending -> cancelled`
+- mapping input into domain value objects
+- using the repository, clock, and ID generator ports
+- keeping request-context handling outside the domain
 
-Assumptions encoded in code and tests:
+### Adapters
 
-- `delivered` is terminal
-- `cancelled` is terminal
-- cancellation is allowed only from `pending`
-- statuses are case-sensitive, and non-trimmed string values; invalid or unknown values are rejected
+Implemented adapters:
 
-This lifecycle is intentionally small and pragmatic for the task.
-
-### Event
-
-`Event` models a historical shipment status change.
-
-Each event contains:
-
-- status
-- sequence number
-- occurrence time
-
-Validation enforced for every event:
-
-- sequence must be greater than zero
-- status must be one of the allowed domain statuses
-- occurrence time must be non-zero
-- occurrence time is normalized to UTC
-
-Design decisions:
-
-- event fields are private so invalid events cannot be assembled freely from outside the package
-- `RehydrateEvent(...)` is the exported constructor for rebuilding persisted history
-- the aggregate uses the same canonical validation path when creating new events internally
-
-### Driver
-
-`Driver` is a validated value object.
-
-Validation:
-
-- driver ID must be non-empty after trimming
-- driver name must be non-empty after trimming
-
-Design decisions:
-
-- fields are private and exposed through getters
-- constructor validation keeps caller code from bypassing invariants
-
-### Unit
-
-`Unit` is a validated value object representing the transport unit.
-
-Validation:
-
-- unit ID must be non-empty after trimming
-- registration number must be non-empty after trimming
-
-Design decisions:
-
-- fields are private and exposed through getters
-- constructor validation keeps the value object consistent everywhere it is used
-
-### Money
-
-`Money` stores an amount in minor units as `int64`.
-
-Validation:
-
-- negative amounts are rejected
-- aggregate constructors reject `nil` money pointers
-- aggregate constructors reject zero-value or uninitialized `Money` values via the internal `valid` flag
-
-Design decisions:
-
-- minor units avoid floating-point precision bugs
-- `int64` is enough for the scope of this task and keeps the model simple
-- `valid bool` exists to distinguish:
-  - an intentionally created zero amount from `NewMoney(0)`
-  - an omitted or zero-value `Money{}`
-- aggregate params use `*Money` so omission can be detected explicitly at the boundary
-- the current model assumes a single currency for now
-
-## Constructors and rehydration
-
-### NewShipment
-
-`NewShipment(NewParams)` is used for new aggregate creation.
-
-It:
-
-- validates shipment metadata
-- validates driver and unit value objects
-- validates explicit money presence
-- creates the initial `pending` event
-- normalizes the initial event time to UTC
-
-### Rehydrate
-
-`Rehydrate(RehydrateParams)` exists for rebuilding a shipment from persisted state.
-
-It:
-
-- validates the same shipment metadata as creation
-- validates money and supporting value objects again at the aggregate boundary
-- validates the full event stream before rebuilding the aggregate
-
-Why this exists:
-
-- repositories need a safe way to rebuild aggregates from storage
-- replaying persisted data through command methods would be awkward and error-prone
-- rehydration keeps persistence concerns out of the domain object API while still protecting invariants
-
-## Assumptions captured in tests
-
-The current tests intentionally lock down these domain assumptions:
-
-- a newly created shipment always starts with exactly one `pending` event
-- valid lifecycle transitions advance status and sequence correctly
-- `pending -> cancelled` is allowed
-- `picked_up -> cancelled` is not allowed
-- `pending -> delivered` is not allowed
-- delivered and cancelled shipments reject further transitions
-- invalid transitions do not mutate aggregate state
-- out-of-order event times are rejected
-- rehydration rejects empty history
-- rehydration rejects non-pending initial status
-- rehydration rejects non-contiguous event sequences
-- rehydration rejects non-chronological history
-- rehydration rejects invalid money presence
-- event timestamps are normalized to UTC
-- history returned by `Events()` cannot be mutated back into the aggregate
-- the exported API is sufficient to create and advance a shipment from outside the package
-
-## Non-goals for the current slice
-
-These are intentionally deferred to later layers:
-
-- protobuf and gRPC types
-- repository ports and adapters
-- database schema or persistence details
-- service wiring and transport error mapping
-- multi-currency support
-
-## Next planned layers
-
-- application service / use cases
-- repository port plus in-memory adapter
-- `.proto` contract
+- in-memory shipment repository
+- UTC system clock
+- shipment ID generator
 - gRPC server adapter
-- runnable `cmd/shipmentd`
+
+The gRPC adapter only:
+
+- maps protobuf requests into application commands/queries
+- calls the application service
+- maps DTOs and errors back into protobuf / gRPC responses
+
+## Protocol Buffers
+
+The contract is defined in:
+
+- `api/proto/shipment/v1/shipment.proto`
+
+RPCs:
+
+- `CreateShipment`
+- `GetShipment`
+- `AddShipmentStatusEvent`
+- `GetShipmentHistory`
+
+Contract choices:
+
+- read/update RPCs use `reference_number` as the business lookup key
+- shipment status is a protobuf enum
+- timestamps use `google.protobuf.Timestamp`
+- money uses integer minor units
+- create-request money fields are `optional int64` so omission is distinguishable from an intentional zero
+
+Generated files:
+
+- `api/proto/shipment/v1/shipment.pb.go`
+- `api/proto/shipment/v1/shipment_grpc.pb.go`
+
+`task proto` installs local codegen tools into `./bin` and keeps Buf cache data inside the repo-local `.cache` directory.
+
+## Design Decisions
+
+### Business identifier
+
+The service uses two identifiers:
+
+- `reference number` is the external, business-facing lookup key
+- `shipment ID` is an internally generated technical identifier
+
+Read and update operations are reference-number-centric because that best matches the task language and expected client behavior.
+
+### Event history as source of truth
+
+Shipment state is derived from event history instead of duplicated mutable fields.
+
+That keeps:
+
+- current status
+- created timestamp
+- updated timestamp
+
+consistent with the recorded status timeline.
+
+### Money model
+
+`Money` stores minor units as `int64`.
+
+This avoids floating-point precision issues and keeps arithmetic safe for the scope of the task.
+
+The value object also carries an internal `valid` flag so the aggregate can distinguish:
+
+- an intentionally created zero amount via `NewMoney(0)`
+- an omitted / zero-value `Money{}`
+
+To preserve that invariant across boundaries:
+
+- domain constructors accept `*Money`
+- application create commands accept `*int64`
+- protobuf create requests use `optional int64`
+
+### Rehydration
+
+The domain exposes `Rehydrate(...)` for repository use.
+
+This keeps persistence concerns outside the aggregate while still validating loaded state:
+
+- non-empty history
+- valid initial event
+- contiguous sequence numbers
+- chronological ordering
+- valid lifecycle transitions
+
+### In-memory repository
+
+The memory repository stores detached aggregate copies and uses copy-on-write update semantics.
+
+That means:
+
+- callers cannot mutate stored state through returned pointers
+- failed updates do not partially persist aggregate changes
+
+### gRPC error mapping
+
+Errors are mapped consistently as follows:
+
+- invalid input / domain validation failures -> `InvalidArgument`
+- shipment not found -> `NotFound`
+- duplicate reference number -> `AlreadyExists`
+- canceled context -> `Canceled`
+- deadline exceeded -> `DeadlineExceeded`
+- unexpected failures -> `Internal`
+
+## Assumptions
+
+- Shipment lifecycle is:
+  - `pending -> picked_up -> in_transit -> delivered`
+  - `pending -> cancelled`
+- `delivered` is terminal.
+- `cancelled` is terminal.
+- Cancellation is allowed only from `pending`.
+- Status timestamps are normalized to UTC.
+- Origin and destination are treated as literal user-provided labels after trimming.
+- The current implementation assumes a single currency.
+- The service uses an in-memory repository for the take-home scope, so data is lost on restart.
+- Status event timestamps are assigned by the server clock, not supplied by the client over gRPC.
+
+## Test Coverage
+
+The test suite currently covers:
+
+- shipment creation
+- valid status transitions
+- invalid status transitions
+- terminal-state behavior
+- event chronology
+- rehydration validation
+- money presence validation
+- application boundary behavior
+- in-memory repository copy-on-write safety
+- gRPC happy-path request handling
+- gRPC error-to-status-code mapping
+
+## Repository Layout
+
+```text
+cmd/shipmentd
+api/proto/shipment/v1
+internal/domain/shipment
+internal/application
+internal/ports
+internal/adapters/clock
+internal/adapters/id
+internal/adapters/grpc
+internal/adapters/repository/memory
+```
+
+## Optional Improvements Not Implemented
+
+- persistent storage
+- Docker / docker-compose
+- structured logging
+- configuration package
+- interceptors / auth / observability
+- integration tests against an external client tool
