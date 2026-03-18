@@ -17,6 +17,8 @@
 !README.md
 !LICENSE
 
+!Insomnia.yaml
+
 !Taskfile.yml
 !.golangci.yml
 !buf.yaml
