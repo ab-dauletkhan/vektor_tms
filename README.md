@@ -101,12 +101,52 @@ Implemented adapters:
 - UTC system clock
 - shipment ID generator
 - gRPC server adapter
+- unary logging and recovery interceptors
 
 The gRPC adapter only:
 
 - maps protobuf requests into application commands/queries
 - calls the application service
 - maps DTOs and errors back into protobuf / gRPC responses
+
+The runtime bootstrap also includes:
+
+- signal-aware shutdown on `SIGINT` / `SIGTERM`
+- `GracefulStop()` with a 30-second forced-stop fallback
+
+## System Design
+
+### Request Flow
+
+An incoming request moves through the service like this:
+
+1. The gRPC transport adapter receives a protobuf request and validates transport-level presence rules.
+2. The transport layer maps protobuf fields into application commands or queries.
+3. The application layer checks request context, uses the clock / ID generator / repository ports, and constructs domain value objects.
+4. The domain aggregate enforces lifecycle invariants and updates shipment event history.
+5. The repository persists and returns detached aggregate copies so callers cannot mutate stored state indirectly.
+6. The transport adapter maps application DTOs and classified errors back into protobuf messages and gRPC status codes.
+
+### Write Path
+
+`CreateShipment` generates a technical shipment ID, creates the initial `pending` event with the server clock, and stores the aggregate by business reference number.
+
+`AddShipmentStatusEvent` loads the shipment by reference number and applies the mutation through a repository update closure. The memory repository uses copy-on-write semantics, so a failed update never partially persists state.
+
+### Read Path
+
+`GetShipment` and `GetShipmentHistory` are reference-number-centric reads. They load detached aggregate copies from the repository and map them into transport-agnostic DTOs before the gRPC adapter turns them into protobuf responses.
+
+### Runtime Topology
+
+This is intentionally a single-process service for the take-home scope:
+
+- one gRPC server
+- one in-memory repository
+- one application service coordinating the use cases
+- no external database or broker
+
+That keeps the solution small while still preserving clear clean-architecture boundaries.
 
 ## Protocol Buffers
 
@@ -197,6 +237,8 @@ That means:
 - callers cannot mutate stored state through returned pointers
 - failed updates do not partially persist aggregate changes
 
+To keep update cost reasonable, detached copies are made with a cheap aggregate clone instead of full rehydration on every repository mutation.
+
 ### gRPC error mapping
 
 Errors are mapped consistently as follows:
@@ -207,6 +249,35 @@ Errors are mapped consistently as follows:
 - canceled context -> `Canceled`
 - deadline exceeded -> `DeadlineExceeded`
 - unexpected failures -> `Internal`
+
+The gRPC adapter classifies errors through typed marker-style sentinels instead of a large manual switch, so domain and port validation errors map cleanly to transport status codes.
+
+### Transport hardening
+
+The gRPC server installs:
+
+- a unary logging interceptor
+- a unary recovery interceptor that converts panics into `Internal`
+- bounded graceful shutdown with a forced stop after 30 seconds
+
+This is still lightweight, but it avoids the most obvious operational footguns for a take-home service.
+
+### Shipment ID generation
+
+Shipment IDs are generated inside the server process and are always returned in one stable format:
+
+- `shipment-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`
+
+The normal path uses cryptographic randomness. If that fails, the fallback still preserves the same external format so callers do not see mixed ID shapes.
+
+### Status mapping safety
+
+Domain statuses remain defined in the domain layer, while protobuf statuses live in the transport layer.
+
+To reduce drift between those two worlds:
+
+- transport mapping is centralized in one place
+- mapping completeness is validated at startup against the full set of known domain and protobuf statuses
 
 ## Assumptions
 
@@ -256,7 +327,8 @@ internal/adapters/repository/memory
 
 - persistent storage
 - Docker / docker-compose
-- structured logging
-- configuration package
-- interceptors / auth / observability
-- integration tests against an external client tool
+- structured logging beyond the standard logger
+- metrics and tracing
+- authentication / authorization
+- configuration package with stronger env validation
+- integration tests against an external gRPC client tool
