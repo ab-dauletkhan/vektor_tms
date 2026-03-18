@@ -12,6 +12,14 @@ const (
 	StatusCancelled Status = "cancelled"
 )
 
+var allStatuses = []Status{
+	StatusPending,
+	StatusPickedUp,
+	StatusInTransit,
+	StatusDelivered,
+	StatusCancelled,
+}
+
 // Assumption: once a shipment is picked up it must continue through transit and
 // cannot be cancelled anymore.
 var allowedTransitions = map[Status][]Status{
@@ -23,12 +31,7 @@ var allowedTransitions = map[Status][]Status{
 }
 
 func (s Status) IsValid() bool {
-	switch s {
-	case StatusPending, StatusPickedUp, StatusInTransit, StatusDelivered, StatusCancelled:
-		return true
-	default:
-		return false
-	}
+	return slices.Contains(allStatuses, s)
 }
 
 func ValidateTransition(current, next Status) error {
@@ -51,4 +54,10 @@ func (s Status) canTransitionTo(next Status) bool {
 	}
 
 	return slices.Contains(allowedTransitions[s], next)
+}
+
+func AllStatuses() []Status {
+	copied := make([]Status, len(allStatuses))
+	copy(copied, allStatuses)
+	return copied
 }

@@ -198,6 +198,16 @@ func (s *Shipment) Events() []Event {
 	return copied
 }
 
+func (s *Shipment) Clone() *Shipment {
+	if s == nil {
+		return nil
+	}
+
+	cloned := *s
+	cloned.events = s.Events()
+	return &cloned
+}
+
 func (s *Shipment) lastEvent() Event {
 	return s.events[len(s.events)-1]
 }

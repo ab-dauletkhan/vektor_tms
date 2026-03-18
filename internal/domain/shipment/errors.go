@@ -1,26 +1,34 @@
 package shipment
 
-import "errors"
+type invalidArgumentError string
+
+func (e invalidArgumentError) Error() string {
+	return string(e)
+}
+
+func (invalidArgumentError) IsInvalidArgument() bool {
+	return true
+}
 
 var (
-	ErrInvalidShipmentID       = errors.New("invalid shipment id")
-	ErrInvalidReferenceNumber  = errors.New("invalid reference number")
-	ErrInvalidLocation         = errors.New("invalid location")
-	ErrOriginEqualsDestination = errors.New("origin and destination must differ")
+	ErrInvalidShipmentID       = invalidArgumentError("invalid shipment id")
+	ErrInvalidReferenceNumber  = invalidArgumentError("invalid reference number")
+	ErrInvalidLocation         = invalidArgumentError("invalid location")
+	ErrOriginEqualsDestination = invalidArgumentError("origin and destination must differ")
 
-	ErrInvalidDriver = errors.New("invalid driver")
-	ErrInvalidUnit   = errors.New("invalid unit")
-	ErrInvalidMoney  = errors.New("invalid money")
+	ErrInvalidDriver = invalidArgumentError("invalid driver")
+	ErrInvalidUnit   = invalidArgumentError("invalid unit")
+	ErrInvalidMoney  = invalidArgumentError("invalid money")
 
-	ErrInvalidCreatedAt     = errors.New("invalid created_at")
-	ErrInvalidOccurredAt    = errors.New("invalid occurred_at")
-	ErrInvalidEventSequence = errors.New("invalid event sequence")
-	ErrEmptyEventHistory    = errors.New("shipment history cannot be empty")
-	ErrEventOutOfOrder      = errors.New("shipment event is out of chronological order")
+	ErrInvalidCreatedAt     = invalidArgumentError("invalid created_at")
+	ErrInvalidOccurredAt    = invalidArgumentError("invalid occurred_at")
+	ErrInvalidEventSequence = invalidArgumentError("invalid event sequence")
+	ErrEmptyEventHistory    = invalidArgumentError("shipment history cannot be empty")
+	ErrEventOutOfOrder      = invalidArgumentError("shipment event is out of chronological order")
 
-	ErrRevenueExceedsAmount = errors.New("driver revenue cannot exceed shipment amount")
-	ErrInvalidStatus        = errors.New("invalid shipment status")
-	ErrInvalidInitialStatus = errors.New("initial shipment status must be pending")
-	ErrInvalidTransition    = errors.New("invalid shipment status transition")
-	ErrDuplicateStatus      = errors.New("duplicate shipment status")
+	ErrRevenueExceedsAmount = invalidArgumentError("driver revenue cannot exceed shipment amount")
+	ErrInvalidStatus        = invalidArgumentError("invalid shipment status")
+	ErrInvalidInitialStatus = invalidArgumentError("initial shipment status must be pending")
+	ErrInvalidTransition    = invalidArgumentError("invalid shipment status transition")
+	ErrDuplicateStatus      = invalidArgumentError("duplicate shipment status")
 )
