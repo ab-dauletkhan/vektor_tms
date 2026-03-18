@@ -1,0 +1,95 @@
+syntax = "proto3";
+
+package shipment.v1;
+
+option go_package = "github.com/ab-dauletkhan/vektor_tms/api/proto/shipment/v1;shipmentv1";
+
+import "google/protobuf/timestamp.proto";
+
+service ShipmentService {
+  rpc CreateShipment(CreateShipmentRequest) returns (CreateShipmentResponse);
+  rpc GetShipment(GetShipmentRequest) returns (GetShipmentResponse);
+  rpc AddShipmentStatusEvent(AddShipmentStatusEventRequest) returns (AddShipmentStatusEventResponse);
+  rpc GetShipmentHistory(GetShipmentHistoryRequest) returns (GetShipmentHistoryResponse);
+}
+
+enum ShipmentStatus {
+  SHIPMENT_STATUS_UNSPECIFIED = 0;
+  SHIPMENT_STATUS_PENDING = 1;
+  SHIPMENT_STATUS_PICKED_UP = 2;
+  SHIPMENT_STATUS_IN_TRANSIT = 3;
+  SHIPMENT_STATUS_DELIVERED = 4;
+  SHIPMENT_STATUS_CANCELLED = 5;
+}
+
+message Driver {
+  string id = 1;
+  string name = 2;
+}
+
+message Unit {
+  string id = 1;
+  string registration_number = 2;
+}
+
+message Shipment {
+  string id = 1;
+  string reference_number = 2;
+  string origin = 3;
+  string destination = 4;
+  ShipmentStatus current_status = 5;
+  Driver driver = 6;
+  Unit unit = 7;
+  int64 shipment_amount_minor = 8;
+  int64 driver_revenue_minor = 9;
+  google.protobuf.Timestamp created_at = 10;
+  google.protobuf.Timestamp updated_at = 11;
+}
+
+message ShipmentEvent {
+  uint32 sequence = 1;
+  ShipmentStatus status = 2;
+  google.protobuf.Timestamp occurred_at = 3;
+}
+
+message CreateShipmentRequest {
+  string reference_number = 1;
+  string origin = 2;
+  string destination = 3;
+  Driver driver = 4;
+  Unit unit = 5;
+  optional int64 shipment_amount_minor = 6;
+  optional int64 driver_revenue_minor = 7;
+}
+
+message CreateShipmentResponse {
+  Shipment shipment = 1;
+}
+
+message GetShipmentRequest {
+  string reference_number = 1;
+}
+
+message GetShipmentResponse {
+  Shipment shipment = 1;
+}
+
+message AddShipmentStatusEventRequest {
+  string reference_number = 1;
+  ShipmentStatus status = 2;
+}
+
+message AddShipmentStatusEventResponse {
+  Shipment shipment = 1;
+  ShipmentEvent event = 2;
+}
+
+message GetShipmentHistoryRequest {
+  string reference_number = 1;
+}
+
+message GetShipmentHistoryResponse {
+  string shipment_id = 1;
+  string reference_number = 2;
+  repeated ShipmentEvent events = 3;
+}
